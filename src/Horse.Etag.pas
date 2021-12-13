@@ -1,18 +1,24 @@
 unit Horse.Etag;
 
 {$IF DEFINED(FPC)}
-{$MODE DELPHI}{$H+}
+  {$MODE DELPHI}{$H+}
 {$ENDIF}
 
 interface
 
 uses
+  Horse,
+  Horse.Commons,
   {$IF DEFINED(FPC)}
-    fpjson,
+    md5,
+    fpjson;
   {$ELSE}
-    System.SysUtils, System.Classes, System.JSON, Web.HTTPApp,
+    System.SysUtils,
+    System.Classes,
+    System.JSON,
+    Web.HTTPApp,
+    IdHashMessageDigest;
   {$ENDIF}
-  Horse, Horse.Commons, IdHashMessageDigest;
 
 procedure eTag(Req: THorseRequest; Res: THorseResponse; Next: {$IF DEFINED(FPC)}TNextProc{$ELSE}TProc{$ENDIF});
 
@@ -21,28 +27,37 @@ implementation
 procedure eTag(Req: THorseRequest; Res: THorseResponse; Next: {$IF DEFINED(FPC)}TNextProc{$ELSE}TProc{$ENDIF});
 var
   LContent: TObject;
-  Hash: TIdHashMessageDigest5;
+  {$IFNDEF FPC}
+    Hash: TIdHashMessageDigest5;
+  {$ENDIF}
   eTag: String;
 begin
   try
     Next;
   finally
-    LContent := THorseHackResponse(Res).GetContent;
+    LContent := Res.Content;
 
     if Assigned(LContent) and LContent.InheritsFrom({$IF DEFINED(FPC)}TJSONData{$ELSE}TJSONValue{$ENDIF}) then
     begin
+      {$IF DEFINED(FPC)}
+      eTag := MD5Print(MD5String(TJSONData(LContent).ToString));
+      {$ELSE}
       Hash := TIdHashMessageDigest5.Create;
       try
-        eTag := Hash.HashStringAsHex({$IF DEFINED(FPC)}TJSONData{$ELSE}TJSONValue{$ENDIF}(LContent).ToString);
+        eTag := Hash.HashStringAsHex(TJSONValue(LContent).ToString);
       finally
         Hash.Free;
       end;
+      {$ENDIF}
     end;
 
-    if (Req.Headers['If-None-Match'] = eTag) and                                                              (eTag <> '') then
+    if (Req.Headers['If-None-Match'] = eTag) and (eTag <> '') then
+    begin
       Res.Status(THTTPStatus.NotModified);
+      Res.Content(nil);
+    end;
 
-    THorseHackResponse(Res).GetWebResponse.SetCustomHeader('ETag', eTag);
+    Res.RawWebResponse.SetCustomHeader('ETag', eTag);
   end;
 end;
 
